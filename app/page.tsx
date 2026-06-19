@@ -257,11 +257,46 @@ export default function Home() {
 
   const fetchRealPlaces = async (coords: Coords, searchText: string, radius: number) => {
     const query = buildOverpassQuery(coords.lat, coords.lng, searchText, radius);
-    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
-    const data = await res.json();
+
+    // Multiple mirror servers — if one is down/rate-limited, try the next
+    const servers = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.openstreetmap.ru/api/interpreter",
+    ];
+
+    let data: { elements: unknown[] } | null = null;
+    let lastError: unknown = null;
+
+    for (const server of servers) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        const res = await fetch(server, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: query,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+
+        data = await res.json();
+        break; // success — stop trying other servers
+      } catch (err) {
+        lastError = err;
+        continue; // try next server
+      }
+    }
+
+    if (!data) {
+      throw lastError instanceof Error ? lastError : new Error("All map servers are busy. Please try again.");
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return data.elements.filter((el: any) => el.tags && el.tags.name).map((el: any, i: number) => {
+    return (data.elements as any[]).filter((el: any) => el.tags && el.tags.name).map((el: any, i: number) => {
       const lat = el.lat ?? el.center?.lat ?? coords.lat;
       const lng = el.lon ?? el.center?.lon ?? coords.lng;
       const t = el.tags;
@@ -306,7 +341,9 @@ export default function Home() {
         try {
           const results = await fetchRealPlaces(coords, search, selectedRadius);
           setPlaces(results); setShowResults(true);
-        } catch { setLocationError("Could not fetch places. Please try again."); }
+        } catch {
+          setLocationError("Map servers are busy right now. Please wait a few seconds and tap search again.");
+        }
         setLoading(false);
       },
       () => { setLoading(false); setLocationError("Location access denied. Please allow location in your browser settings."); },
