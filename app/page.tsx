@@ -443,7 +443,12 @@ export default function Home() {
           className="mt-4 max-w-2xl text-base md:text-xl text-neutral-400">
           Discover real cafés & restaurants near you — anywhere in the world.
         </motion.p>
-        <p className="mt-3 text-neutral-600 text-xs tracking-wide">Created by Ashley Johnson</p>
+        <p className="mt-3 text-sm tracking-wide">
+          Created by{" "}
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-semibold">
+            Ashley Johnson
+          </span>
+        </p>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
           className="mt-8 flex gap-8 md:gap-16 flex-wrap justify-center">
@@ -602,8 +607,10 @@ export default function Home() {
         </AnimatePresence>
       </div>
 
-      <footer className="text-center text-neutral-600 text-xs pb-8">
-        Created by Ashley Johnson · NearYou AI · Powered by OpenStreetMap
+      <footer className="text-center text-neutral-500 text-xs pb-8">
+        Created by{" "}
+        <span className="text-blue-400 font-medium">Ashley Johnson</span>
+        {" "}· NearYou AI · Powered by OpenStreetMap
       </footer>
     </main>
   );
