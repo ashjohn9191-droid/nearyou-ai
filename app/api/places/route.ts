@@ -1,76 +1,71 @@
 import { NextRequest, NextResponse } from "next/server";
 
-function buildOverpassQuery(lat: number, lng: number, searchText: string, radius: number) {
-  let amenities = '["amenity"~"cafe|restaurant|fast_food|bar|pub|food_court"]';
+const GEOAPIFY_KEY = process.env.GEOAPIFY_API_KEY;
+
+// Map our search intent to Geoapify place categories
+// Full category list: https://apidocs.geoapify.com/docs/places/#categories
+function getCategories(searchText: string): string {
   const lower = searchText.toLowerCase();
+
   if (
     lower.includes("cafe") || lower.includes("café") || lower.includes("coffee") ||
     lower.includes("cozy") || lower.includes("quiet") || lower.includes("work")
   ) {
-    amenities = '["amenity"~"cafe"]';
-  } else if (
-    lower.includes("restaurant") || lower.includes("dinner") || lower.includes("food") ||
-    lower.includes("eat") || lower.includes("date") || lower.includes("family")
-  ) {
-    amenities = '["amenity"~"restaurant|food_court"]';
-  } else if (
+    return "catering.cafe";
+  }
+  if (
     lower.includes("bar") || lower.includes("pub") || lower.includes("nightlife") || lower.includes("social")
   ) {
-    amenities = '["amenity"~"bar|pub"]';
-  } else if (lower.includes("fast") || lower.includes("quick") || lower.includes("budget")) {
-    amenities = '["amenity"~"fast_food|food_court"]';
+    return "catering.bar,catering.pub";
   }
-  return `[out:json][timeout:25];(node${amenities}(around:${radius},${lat},${lng});way${amenities}(around:${radius},${lat},${lng}););out body;>;out skel qt;`;
+  if (lower.includes("fast") || lower.includes("quick") || lower.includes("budget")) {
+    return "catering.fast_food";
+  }
+  if (lower.includes("park") || lower.includes("outdoor")) {
+    return "leisure.park";
+  }
+  // default: restaurants + cafes
+  return "catering.restaurant,catering.cafe";
 }
-
-const SERVERS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.openstreetmap.ru/api/interpreter",
-];
 
 export async function POST(req: NextRequest) {
   try {
+    if (!GEOAPIFY_KEY) {
+      return NextResponse.json(
+        { error: "Server is missing GEOAPIFY_API_KEY. Add it in Vercel environment variables." },
+        { status: 500 }
+      );
+    }
+
     const { lat, lng, searchText, radius } = await req.json();
 
     if (typeof lat !== "number" || typeof lng !== "number") {
       return NextResponse.json({ error: "Missing or invalid coordinates" }, { status: 400 });
     }
 
-    const query = buildOverpassQuery(lat, lng, searchText ?? "", radius ?? 2000);
+    const categories = getCategories(searchText ?? "");
+    const safeRadius = Math.min(Math.max(radius ?? 2000, 100), 50000); // clamp 100m–50km
 
-    let lastError = "";
+    const url = `https://api.geoapify.com/v2/places?categories=${encodeURIComponent(
+      categories
+    )}&filter=circle:${lng},${lat},${safeRadius}&bias=proximity:${lng},${lat}&limit=20&apiKey=${GEOAPIFY_KEY}`;
 
-    for (const server of SERVERS) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-        const res = await fetch(server, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: query,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
 
-        if (!res.ok) {
-          lastError = `Server ${server} returned ${res.status}`;
-          continue;
-        }
-
-        const data = await res.json();
-        return NextResponse.json(data);
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : "Unknown error";
-        continue;
-      }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: `Geoapify returned ${res.status}: ${text}` },
+        { status: 502 }
+      );
     }
 
-    return NextResponse.json(
-      { error: `All map servers failed. ${lastError}` },
-      { status: 502 }
-    );
+    const data = await res.json();
+    return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Server error" },

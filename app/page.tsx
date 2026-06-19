@@ -274,31 +274,60 @@ export default function Home() {
 
     const data = await res.json();
 
+    // Geoapify returns GeoJSON: { features: [{ properties, geometry }] }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data.elements as any[]).filter((el: any) => el.tags && el.tags.name).map((el: any, i: number) => {
-      const lat = el.lat ?? el.center?.lat ?? coords.lat;
-      const lng = el.lon ?? el.center?.lon ?? coords.lng;
-      const t = el.tags;
-      const dist = getDistanceKm(coords.lat, coords.lng, lat, lng);
-      const tagList = [
-        t.amenity ? t.amenity.replace("_", " ") : null,
-        t.cuisine ? t.cuisine.split(";")[0] : null,
-        t["diet:vegetarian"] === "yes" ? "Vegetarian" : null,
-        t.outdoor_seating === "yes" ? "Outdoor seating" : null,
-        t.wifi === "yes" || t["internet_access"] === "wlan" ? "WiFi" : null,
-      ].filter(Boolean) as string[];
-      return {
-        id: i, title: t.name,
-        desc: [t.description, t.cuisine ? `Cuisine: ${t.cuisine.replace(";", ", ")}` : null, t.phone ? `📞 ${t.phone}` : null].filter(Boolean).join(" · ") || `A ${t.amenity?.replace("_", " ") ?? "place"} near you.`,
-        tags: tagList.length ? tagList : [t.amenity ?? "place"],
-        rating: t["stars"] ?? "—",
-        distance: dist.str, distanceNum: dist.num,
-        emoji: getEmoji(t), status: t.opening_hours ? "Open" : "Unknown" as Place["status"],
-        lat, lng,
-        address: [t["addr:street"], t["addr:city"]].filter(Boolean).join(", ") || "Nearby",
-        phone: t.phone, cuisine: t.cuisine, openingHours: t.opening_hours, website: t.website,
-      } as Place;
-    });
+    const features = (data.features ?? []) as any[];
+
+    return features
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((f: any) => f.properties?.name)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((f: any, i: number) => {
+        const props = f.properties;
+        const lat = props.lat ?? f.geometry?.coordinates?.[1] ?? coords.lat;
+        const lng = props.lon ?? f.geometry?.coordinates?.[0] ?? coords.lng;
+        const dist = getDistanceKm(coords.lat, coords.lng, lat, lng);
+
+        const categoryLabel = (props.categories?.[0] ?? "place")
+          .split(".")
+          .pop()
+          ?.replace(/_/g, " ");
+
+        const tagList = [
+          categoryLabel,
+          props.catering?.cuisine ? String(props.catering.cuisine).split(";")[0] : null,
+          props.catering?.diet_vegetarian ? "Vegetarian" : null,
+          props.wifi_available ? "WiFi" : null,
+        ].filter(Boolean) as string[];
+
+        const addressLine =
+          props.formatted ?? props.address_line2 ?? props.street ?? "Nearby";
+
+        return {
+          id: i,
+          title: props.name as string,
+          desc:
+            [
+              props.catering?.cuisine ? `Cuisine: ${String(props.catering.cuisine).replace(";", ", ")}` : null,
+              props.contact?.phone ? `📞 ${props.contact.phone}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || `A ${categoryLabel ?? "place"} near you.`,
+          tags: tagList.length ? tagList : [categoryLabel ?? "place"],
+          rating: "—",
+          distance: dist.str,
+          distanceNum: dist.num,
+          emoji: getEmoji({ amenity: categoryLabel ?? "" }),
+          status: props.opening_hours ? ("Open" as Place["status"]) : ("Unknown" as Place["status"]),
+          lat,
+          lng,
+          address: addressLine,
+          phone: props.contact?.phone,
+          cuisine: props.catering?.cuisine,
+          openingHours: props.opening_hours,
+          website: props.website ?? props.contact?.website,
+        } as Place;
+      });
   };
 
   const fetchCityName = async (lat: number, lng: number) => {
