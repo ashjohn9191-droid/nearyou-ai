@@ -256,44 +256,23 @@ export default function Home() {
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
 
   const fetchRealPlaces = async (coords: Coords, searchText: string, radius: number) => {
-    const query = buildOverpassQuery(coords.lat, coords.lng, searchText, radius);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
-    // Multiple mirror servers — if one is down/rate-limited, try the next
-    const servers = [
-      "https://overpass-api.de/api/interpreter",
-      "https://overpass.kumi.systems/api/interpreter",
-      "https://overpass.openstreetmap.ru/api/interpreter",
-    ];
+    const res = await fetch("/api/places", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: coords.lat, lng: coords.lng, searchText, radius }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
 
-    let data: { elements: unknown[] } | null = null;
-    let lastError: unknown = null;
-
-    for (const server of servers) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        const res = await fetch(server, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: query,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
-
-        data = await res.json();
-        break; // success — stop trying other servers
-      } catch (err) {
-        lastError = err;
-        continue; // try next server
-      }
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || `Request failed with status ${res.status}`);
     }
 
-    if (!data) {
-      throw lastError instanceof Error ? lastError : new Error("All map servers are busy. Please try again.");
-    }
+    const data = await res.json();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (data.elements as any[]).filter((el: any) => el.tags && el.tags.name).map((el: any, i: number) => {
@@ -341,8 +320,13 @@ export default function Home() {
         try {
           const results = await fetchRealPlaces(coords, search, selectedRadius);
           setPlaces(results); setShowResults(true);
-        } catch {
-          setLocationError("Map servers are busy right now. Please wait a few seconds and tap search again.");
+        } catch (err) {
+          console.error("Place fetch error:", err);
+          setLocationError(
+            err instanceof Error
+              ? `Could not load places: ${err.message}`
+              : "Could not fetch places. Please try again."
+          );
         }
         setLoading(false);
       },
